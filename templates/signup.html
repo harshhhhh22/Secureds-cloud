@@ -1,0 +1,87 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Create account | SecureDeps Cloud</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <header>
+    <a class="brand" href="{{ url_for('home') }}">
+      <span class="brand-mark">S</span>
+      <span>SecureDeps <span class="gradient-text">Cloud</span></span>
+    </a>
+  </header>
+
+  <main class="auth-layout">
+    <section class="auth-copy">
+      <p class="eyebrow">YOUR SECURITY WORKSPACE</p>
+      <h1>Build securely.<br><span class="gradient-text">Start with visibility.</span></h1>
+      <p>Create your account to scan Python projects and keep your analysis reports organized.</p>
+
+      <div class="feature-list">
+        <div class="feature">
+          <div class="feature-icon">✓</div>
+          <div>
+            <strong>Security-focused analysis</strong>
+            <p>Inspect code patterns and supported dependency versions.</p>
+          </div>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">⌑</div>
+          <div>
+            <strong>Protected account</strong>
+            <p>Your password is stored as a secure hash, not plain text.</p>
+          </div>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">▤</div>
+          <div>
+            <strong>Your reports, in one place</strong>
+            <p>Review the scans associated with your account.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card auth-card">
+      <p class="eyebrow">GET STARTED</p>
+      <h2>Create your account</h2>
+      <p>Use a strong password with at least 12 characters.</p>
+
+      {% for category, message in get_flashed_messages(with_categories=true) %}
+        <div class="notice {{ category }}" role="alert">{{ message }}</div>
+      {% endfor %}
+
+      <form method="post" action="{{ url_for('auth.signup') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <label for="email">Email address</label>
+        <input id="email" name="email" type="email"
+               autocomplete="email" maxlength="254" required>
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password"
+               autocomplete="new-password" minlength="12"
+               maxlength="1024" required>
+
+        <label for="confirm_password">Confirm password</label>
+        <input id="confirm_password" name="confirm_password"
+               type="password" autocomplete="new-password"
+               minlength="12" maxlength="1024" required>
+
+        <button type="submit">Create account →</button>
+      </form>
+
+      <p class="auth-switch">Already registered?
+        <a href="{{ url_for('auth.login') }}">Sign in</a>
+      </p>
+    </section>
+  </main>
+
+  <footer>SecureDeps Cloud · Start your security journey</footer>
+  <script src="{{ url_for('static', filename='js/auth.js') }}" defer></script>
+</body>
+</html>

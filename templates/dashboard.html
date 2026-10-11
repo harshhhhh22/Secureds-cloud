@@ -1,0 +1,200 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard | SecureDeps Cloud</title>
+  <link rel="stylesheet"
+        href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <header>
+    <a class="brand" href="{{ url_for('dashboard') }}">
+      <span class="brand-mark">S</span>
+      <span>SecureDeps <span class="gradient-text">Cloud</span></span>
+    </a>
+
+    <nav>
+      <a href="{{ url_for('dashboard') }}">Dashboard</a>
+      <a href="{{ url_for('history') }}">Scan history</a>
+      <a href="{{ url_for('security_activity') }}">Sign-in activity</a>
+      <form method="post" action="{{ url_for('auth.logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">Log out ↗</button>
+      </form>
+    </nav>
+  </header>
+
+  <main>
+    <div class="dashboard-heading">
+      <div>
+        <p class="eyebrow">SECURITY WORKSPACE</p>
+        <h1>Your dashboard</h1>
+        <p>Welcome back, {{ current_user.email }}. Ready to inspect your next project?</p>
+      </div>
+    </div>
+
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+      <div class="notice {{ category }}" role="alert">{{ message }}</div>
+    {% endfor %}
+
+    <section class="grid">
+      <div class="stat">
+        <span>Analysis engine</span>
+        <strong class="gradient-text">Active</strong>
+        <span>Local project analysis</span>
+      </div>
+      <div class="stat">
+        <span>Account</span>
+        <strong>Protected</strong>
+        <span>Authentication required</span>
+      </div>
+      <div class="stat">
+        <span>Report storage</span>
+        <strong>Private</strong>
+        <span>Linked to your account</span>
+      </div>
+    </section>
+
+    <section class="grid" aria-label="Scan statistics">
+      <div class="stat">
+        <span>Total saved scans</span>
+        <strong>{{ total_scans }}</strong>
+        <span>Across your account</span>
+      </div>
+      <div class="stat">
+        <span>Total findings</span>
+        <strong>{{ severity_counts.values() | sum }}</strong>
+        <span>From saved reports</span>
+      </div>
+      <div class="stat">
+        <span>Critical findings</span>
+        <strong>{{ severity_counts.get("Critical", 0) }}</strong>
+        <span>Review these first</span>
+      </div>
+    </section>
+
+    <section class="grid" aria-label="Security graphs">
+      <div class="card">
+        <p class="eyebrow">LAST 7 DAYS</p>
+        <h2>Scan activity</h2>
+        <p>Project scans saved each day, using UTC dates.</p>
+
+        <div class="chart-bars">
+          {% for label in activity_labels %}
+            {% set value = activity_values[loop.index0] %}
+            {% set max_value = activity_values | max %}
+            <div class="chart-column">
+              <span class="chart-value">{{ value }}</span>
+              <div class="chart-track">
+                <div class="chart-bar"
+                     style="height: {{ (value / max_value * 100) if max_value else 0 }}%">
+                </div>
+              </div>
+              <span class="chart-label">{{ label }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card">
+        <p class="eyebrow">ALL SAVED REPORTS</p>
+        <h2>Findings by severity</h2>
+        <p>Use severity as a guide when deciding what to investigate first.</p>
+
+        {% for label in ["Critical", "High", "Medium", "Low", "Info", "Unknown"] %}
+          {% set value = severity_counts.get(label, 0) %}
+          {% set max_value = severity_counts.values() | max %}
+          <div class="severity-row">
+            <span>{{ label }}</span>
+            <div class="severity-track">
+              <div class="severity-bar"
+                   style="width: {{ (value / max_value * 100) if max_value else 0 }}%">
+              </div>
+            </div>
+            <strong>{{ value }}</strong>
+          </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="card">
+      <p class="eyebrow">NEW ANALYSIS</p>
+      <h2>Scan a Python project</h2>
+      <p>Upload a ZIP archive up to 200 MB. Never upload real secrets or sensitive production data.</p>
+
+      <form method="post" action="{{ url_for('scan_project') }}"
+            enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <label for="file">Select project ZIP</label>
+        <input id="file" name="file" type="file"
+               accept=".zip,application/zip" required>
+
+        <button type="submit">Analyze project →</button>
+      </form>
+      <p class="muted">The upload form sends your ZIP to the authenticated scan endpoint.</p>
+    </section>
+
+    <section style="margin-top:32px">
+      <div class="dashboard-heading">
+        <div>
+          <p class="eyebrow">YOUR REPORTS</p>
+          <h2>Recent scans</h2>
+        </div>
+        <a href="{{ url_for('history') }}">View all reports →</a>
+      </div>
+
+      {% if scans %}
+        <div class="card table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th>Findings</th>
+                <th>Status</th>
+                <th>Created (UTC)</th>
+                <th>Report</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for scan in scans %}
+                <tr>
+                  <td>{{ scan.filename }}</td>
+                  <td>{{ scan.findings_count }}</td>
+                  <td>{{ scan.analysis_status }}</td>
+                  <td>{{ scan.created_at.strftime("%Y-%m-%d %H:%M") if scan.created_at else "—" }}</td>
+                  <td>
+                    <a href="{{ url_for('scan_report', scan_id=scan.id) }}">View →</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="card">
+          <h3>No scans yet</h3>
+          <p>Your reports will appear here after your first project analysis.</p>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="card" style="margin-top:32px">
+      <p class="eyebrow">ACCOUNT SECURITY</p>
+      <h2>Recent sign-in activity</h2>
+      <p>Review successful and failed sign-in events associated with your account.</p>
+      <a href="{{ url_for('security_activity') }}">View sign-in activity →</a>
+    </section>
+  </main>
+
+  <footer>SecureDeps Cloud · Analyze responsibly. Build securely.</footer>
+  
+<script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+<script src="{{ url_for('static', filename='js/upload.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/charts.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}" defer></script>
+
+</body>
+</html>

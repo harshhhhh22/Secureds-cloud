@@ -1,0 +1,420 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scan report | SecureDeps Cloud</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <style>
+    .report-intro { max-width: 850px; color: #a9bad0; line-height: 1.7; }
+    .report-section { margin-top: 28px; }
+    .report-card { margin-top: 14px; }
+    .result-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; }
+    .result-card { padding: 20px; border: 1px solid #293a52; border-radius: 16px; background: #111c2d; }
+    .result-card p, .explanation { color: #a9bad0; line-height: 1.65; }
+    .result-icon { font-size: 25px; margin-bottom: 10px; }
+    .status-pill { display: inline-block; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: #29364a; color: #dce7f5; }
+    .status-good { background: #123b32; color: #86efac; }
+    .status-warning { background: #49351a; color: #fcd34d; }
+    .status-danger { background: #4b252d; color: #fda4af; }
+    .finding { padding: 20px 0; border-bottom: 1px solid #293a52; }
+    .finding:last-child { border-bottom: 0; }
+    .finding h3 { margin: 10px 0; }
+    .finding-meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+    .file-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+    .file-item { padding: 16px; border: 1px solid #293a52; border-radius: 12px; background: #111c2d; }
+    .file-item code { color: #7dd3fc; overflow-wrap: anywhere; }
+    .file-item p { color: #a9bad0; line-height: 1.6; }
+    .next-step { padding: 14px 0; border-bottom: 1px solid #293a52; line-height: 1.6; }
+    .next-step:last-child { border-bottom: 0; }
+    details.technical { margin-top: 18px; }
+    details.technical summary { cursor: pointer; font-weight: 700; padding: 12px 0; }
+    .json-output { white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: auto; color: #cbd5e1; font-size: 13px; }
+    .empty-state { padding: 18px; border-radius: 12px; background: #111c2d; color: #a9bad0; line-height: 1.7; }
+    .section-subtitle { color: #a9bad0; line-height: 1.6; }
+    @media (max-width: 600px) {
+      .report-card { padding: 18px; }
+      .json-output { font-size: 12px; }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <a class="brand" href="{{ url_for('dashboard') }}">
+      <span class="brand-mark">S</span>
+      <span>SecureDeps <span class="gradient-text">Cloud</span></span>
+    </a>
+    <nav>
+      <a href="{{ url_for('dashboard') }}">Dashboard</a>
+      <a href="{{ url_for('history') }}">Scan history</a>
+      <form method="post" action="{{ url_for('auth.logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">Log out ↗</button>
+      </form>
+    </nav>
+  </header>
+
+  {% set results = report.get('results', {}) if report else {} %}
+  {% set structure = results.get('structure', {}) %}
+  {% set code = results.get('code_security', {}) %}
+  {% set dependencies = results.get('dependencies', {}) %}
+  {% set findings = [] %}
+  {% for analyzer_name, analyzer_result in results.items() %}
+    {% if analyzer_result is mapping %}
+      {% for finding in analyzer_result.get('findings', []) %}
+        {% if finding is mapping %}
+          {% set _ = findings.append(finding) %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+  {% endfor %}
+
+  {% set status = scan.analysis_status|string|lower %}
+  {% set skipped = dependencies.get('dependencies_skipped', 0)|int %}
+  {% set code_files = code.get('files_inspected', 0)|int %}
+
+  <main>
+    <p class="eyebrow">YOUR PROJECT HEALTH CHECK</p>
+    <h1>Understand your scan report</h1>
+    <p class="report-intro">
+      This page translates the technical scan into everyday language. It explains
+      what was checked, what the results mean, and what you can do next.
+    </p>
+
+    <section class="card report-card">
+      <h2>{{ scan.filename }}</h2>
+      <p class="section-subtitle">
+        Scan date: {{ scan.created_at.strftime("%d %B %Y at %H:%M UTC") }}
+      </p>
+
+      <div class="result-grid">
+        <div class="result-card">
+          <div class="result-icon">🔎</div>
+          <p>Total reported findings</p>
+          <h2>{{ scan.findings_count }}</h2>
+          <p>
+            These are issues or warnings reported by the checks that ran.
+            A finding is not automatically proof that your application has been hacked.
+          </p>
+        </div>
+
+        <div class="result-card">
+          <div class="result-icon">📋</div>
+          <p>Scan status</p>
+          <h2>
+            {% if status == 'complete' %}
+              Complete
+            {% elif status == 'partial' %}
+              Partially checked
+            {% elif status == 'failed' %}
+              Failed
+            {% else %}
+              {{ scan.analysis_status|replace('_', ' ')|title }}
+            {% endif %}
+          </h2>
+          <p>
+            {% if status == 'complete' %}
+              The configured checks completed. This does not guarantee that the project is free of every security problem.
+            {% elif status == 'partial' %}
+              Some checks completed, but other checks were unavailable or skipped. The project needs further review.
+            {% elif status == 'failed' %}
+              The scan did not complete successfully. Review the error details or try again.
+            {% else %}
+              Review the sections below to see which checks ran and which results need attention.
+            {% endif %}
+          </p>
+        </div>
+
+        <div class="result-card">
+          <div class="result-icon">🐍</div>
+          <p>Python code examined</p>
+          <h2>{{ code_files }}</h2>
+          <p>
+            Python files inspected by the code security checker.
+            {% if code.get('parse_errors', 0)|int == 0 %}
+              No Python parsing errors were reported.
+            {% else %}
+              Some files could not be parsed. Those files may not have received all code checks.
+            {% endif %}
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="report-section">
+      <h2>1. The big picture</h2>
+      <p class="section-subtitle">
+        Here is the meaning of the scan in plain English.
+      </p>
+
+      <div class="card report-card">
+        {% if scan.findings_count == 0 %}
+          <h3>✅ No findings were reported by the checks that ran</h3>
+          <p class="explanation">
+            This is encouraging, but it does not mean your project is guaranteed
+            to be secure. Some checks may not cover every kind of vulnerability,
+            and incomplete checks can miss problems.
+          </p>
+        {% else %}
+          <h3>⚠️ The scan reported {{ scan.findings_count }} finding(s)</h3>
+          <p class="explanation">
+            A finding is something the scanner wants you to review. It might be a
+            potential security weakness, a package that needs attention, or a
+            configuration concern. Read each explanation below before deciding
+            what action to take.
+          </p>
+        {% endif %}
+
+        {% if report.get('message') %}
+          <p class="explanation">{{ report.get('message') }}</p>
+        {% endif %}
+
+        {% if status == 'partial' %}
+          <div class="next-step">
+            <span class="status-pill status-warning">Incomplete coverage</span>
+            <p class="explanation">
+              Some parts of the project have not been checked. Do not treat this
+              report as a complete security approval.
+            </p>
+          </div>
+        {% endif %}
+
+        {% if report.get('note') %}
+          <p class="explanation"><strong>Important note:</strong> {{ report.get('note') }}</p>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="report-section">
+      <h2>2. What was checked?</h2>
+      <p class="section-subtitle">
+        Each check looks for a different type of problem.
+      </p>
+
+      <div class="result-grid">
+        <div class="result-card">
+          <div class="result-icon">📁</div>
+          <h3>Project structure</h3>
+          <p>
+            Looks at the files and folders in your ZIP to understand how the
+            project is organised and identify relevant project files.
+          </p>
+          <span class="status-pill">
+            {% if 'structure' in report.get('analyzers_completed', []) %}
+              Check completed
+            {% else %}
+              Check not confirmed
+            {% endif %}
+          </span>
+        </div>
+
+        <div class="result-card">
+          <div class="result-icon">🛡️</div>
+          <h3>Python code</h3>
+          <p>
+            Inspects Python source code for selected patterns that may indicate
+            security risks. It does not execute your code.
+          </p>
+          <span class="status-pill {% if code.get('parse_errors', 0)|int > 0 %}status-warning{% else %}status-good{% endif %}">
+            {{ code_files }} file(s) inspected
+          </span>
+        </div>
+
+        <div class="result-card">
+          <div class="result-icon">📦</div>
+          <h3>Third-party packages</h3>
+          <p>
+            Checks recognised dependency declarations against vulnerability
+            information. Package version details help determine which issues apply.
+          </p>
+          {% if skipped > 0 %}
+            <span class="status-pill status-warning">{{ skipped }} skipped</span>
+            <p>
+              Some dependencies could not be fully checked. A skipped package
+              is not the same as a vulnerable package.
+            </p>
+          {% else %}
+            <span class="status-pill">See findings below</span>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+
+    <section class="report-section">
+      <h2>3. Understand your files</h2>
+      <p class="section-subtitle">
+        Common project files and what they normally do. The exact purpose of a
+        file depends on its contents.
+      </p>
+
+      <div class="file-list">
+        <div class="file-item">
+          <h3><code>app.py</code></h3>
+          <p>Often the main entry point of a Python web application. It may define routes and connect application components.</p>
+        </div>
+        <div class="file-item">
+          <h3><code>auth.py</code></h3>
+          <p>Often contains login, logout, registration, or permission-related logic.</p>
+        </div>
+        <div class="file-item">
+          <h3><code>requirements.txt</code></h3>
+          <p>Lists Python packages the project depends on. Pinning versions helps make installations more predictable.</p>
+        </div>
+        <div class="file-item">
+          <h3><code>.env</code></h3>
+          <p>Often stores private configuration such as secret keys. Do not publish real secrets or commit this file to version control.</p>
+        </div>
+        <div class="file-item">
+          <h3><code>tests/</code></h3>
+          <p>Usually contains automated tests that check whether parts of the application behave as expected.</p>
+        </div>
+        <div class="file-item">
+          <h3><code>.github/workflows/</code></h3>
+          <p>Can contain GitHub Actions automation for running tests, checking code, and performing deployment tasks.</p>
+        </div>
+        <div class="file-item">
+          <h3><code>README.md</code></h3>
+          <p>Usually explains the project's purpose, setup instructions, and how to run it.</p>
+        </div>
+        <div class="file-item">
+          <h3><code>.gitignore</code></h3>
+          <p>Tells Git which files should normally be left out of version control, such as local environments and secret files.</p>
+        </div>
+      </div>
+
+      <p class="explanation">
+        These are general examples, not confirmation that every listed file
+        exists in your uploaded project. The next improvement will connect this
+        section to the actual file inventory discovered in your ZIP.
+      </p>
+    </section>
+
+    <section class="report-section">
+      <h2>4. Findings and what to do about them</h2>
+      <p class="section-subtitle">
+        Review each item. The recommended action depends on the finding and your project.
+      </p>
+
+      {% if findings %}
+        <div class="card report-card">
+          {% for finding in findings %}
+            {% set severity = (finding.get('severity', finding.get('risk', 'info'))|string)|lower %}
+            {% set finding_title = finding.get('title', finding.get('name', finding.get('type', 'Finding to review'))) %}
+            {% set finding_description = finding.get('description', finding.get('message', finding.get('detail', 'The scanner reported an item that needs review. Check the technical details for more information.'))) %}
+            {% set finding_file = finding.get('file', finding.get('path', finding.get('filename', 'File not specified'))) %}
+            {% set finding_line = finding.get('line', finding.get('line_number')) %}
+            {% set recommendation = finding.get('recommendation', finding.get('remediation', finding.get('fix', 'Review this item and consult the relevant package or framework documentation before making changes.'))) %}
+
+            <article class="finding">
+              <div class="finding-meta">
+                <span class="status-pill {% if severity in ['critical', 'high'] %}status-danger{% elif severity in ['medium', 'moderate', 'warning'] %}status-warning{% else %}status-good{% endif %}">
+                  {{ severity|title }}
+                </span>
+                {% if finding.get('category') %}
+                  <span class="status-pill">{{ finding.get('category')|replace('_', ' ')|title }}</span>
+                {% endif %}
+              </div>
+
+              <h3>{{ finding_title }}</h3>
+              <p class="explanation">{{ finding_description }}</p>
+
+              <p>
+                <strong>Where:</strong>
+                <code>{{ finding_file }}</code>
+                {% if finding_line %}
+                  — line {{ finding_line }}
+                {% endif %}
+              </p>
+
+              <div class="next-step">
+                <strong>What should I do?</strong>
+                <p class="explanation">{{ recommendation }}</p>
+              </div>
+
+              {% if finding.get('id') or finding.get('vulnerability_id') %}
+                <p class="explanation">
+                  Reference:
+                  {{ finding.get('id', finding.get('vulnerability_id')) }}
+                </p>
+              {% endif %}
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty-state">
+          <h3>No findings are available to display</h3>
+          <p>
+            This means the report did not provide any findings in the expected
+            format. Check the technical details below to see what each analyzer
+            returned. If checks were skipped or incomplete, further review may
+            still be necessary.
+          </p>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="report-section">
+      <h2>5. Your recommended next steps</h2>
+      <div class="card report-card">
+        {% if scan.findings_count > 0 %}
+          <div class="next-step">
+            <strong>Step 1 — Review the findings</strong>
+            <p class="explanation">Start with findings marked Critical or High, if any. Confirm each issue applies to your project before changing code or packages.</p>
+          </div>
+          <div class="next-step">
+            <strong>Step 2 — Check your package versions</strong>
+            <p class="explanation">Review dependency files such as <code>requirements.txt</code>. Specify appropriate versions and update packages when a relevant fix is available.</p>
+          </div>
+          <div class="next-step">
+            <strong>Step 3 — Run your tests</strong>
+            <p class="explanation">After fixing an issue, run the project's tests and check that the application still works.</p>
+          </div>
+        {% else %}
+          <div class="next-step">
+            <strong>Step 1 — Confirm scan coverage</strong>
+            <p class="explanation">Check which analyzers ran and whether any files or dependencies were skipped.</p>
+          </div>
+          <div class="next-step">
+            <strong>Step 2 — Run automated tests</strong>
+            <p class="explanation">Use the project's tests to catch functional problems that a security scanner may not detect.</p>
+          </div>
+          <div class="next-step">
+            <strong>Step 3 — Keep dependencies updated</strong>
+            <p class="explanation">Regularly review package updates and security advisories.</p>
+          </div>
+        {% endif %}
+
+        {% if status == 'partial' %}
+          <div class="next-step">
+            <strong>Additional step — Complete the missing checks</strong>
+            <p class="explanation">This report is partial. Documentation and CI/CD checks are not yet implemented in the current version of the application.</p>
+          </div>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="report-section">
+      <h2>6. Advanced technical details</h2>
+      <p class="section-subtitle">
+        Intended for developers who want to inspect the raw scanner output.
+      </p>
+      <div class="card report-card">
+        <details class="technical">
+          <summary>Show raw JSON report</summary>
+          <pre class="json-output">{{ report | tojson(indent=2) }}</pre>
+        </details>
+      </div>
+    </section>
+
+    <p style="margin-top:28px">
+      <a href="{{ url_for('history') }}">← Back to scan history</a>
+      &nbsp;·&nbsp;
+      <a href="{{ url_for('dashboard') }}">Return to dashboard</a>
+    </p>
+  </main>
+
+  <footer>SecureDeps Cloud · Understand findings, take action, improve security</footer>
+</body>
+</html>

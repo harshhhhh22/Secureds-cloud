@@ -1,0 +1,105 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign-in Activity | SecureDeps Cloud</title>
+  <link rel="stylesheet"
+        href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <header>
+    <a class="brand" href="{{ url_for('dashboard') }}">
+      <span class="brand-mark">S</span>
+      <span>SecureDeps <span class="gradient-text">Cloud</span></span>
+    </a>
+    <nav>
+      <a href="{{ url_for('dashboard') }}">Dashboard</a>
+      <a href="{{ url_for('history') }}">Scan history</a>
+      <a href="{{ url_for('security_activity') }}">Sign-in activity</a>
+      <form method="post" action="{{ url_for('auth.logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">Log out ↗</button>
+      </form>
+    </nav>
+  </header>
+
+  <main>
+    <div class="dashboard-heading">
+      <div>
+        <p class="eyebrow">ACCOUNT SECURITY</p>
+        <h1>Sign-in activity</h1>
+        <p>Recent sign-in events recorded for your account.</p>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>What this page records</h2>
+      <p>
+        This page displays recorded successful and failed sign-in attempts,
+        the recorded time, and the browser's user-agent string when available.
+      </p>
+      <p>
+        Geographic location is not currently configured. A browser string
+        does not reliably identify a person's physical location.
+      </p>
+    </section>
+
+    <section style="margin-top:32px">
+      <h2>Recent events</h2>
+
+      {% if events %}
+        <div class="card table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Event</th>
+                <th>Time (UTC)</th>
+                <th>Browser information</th>
+                <th>Location</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for event in events %}
+                <tr>
+                  <td>
+                    {% if event.event_type == "success" %}
+                      <span class="activity-success">Successful sign-in</span>
+                    {% elif event.event_type == "failed" %}
+                      <span class="activity-failed">Failed sign-in</span>
+                    {% else %}
+                      {{ event.event_type }}
+                    {% endif %}
+                  </td>
+                  <td>
+                    {{ event.created_at.strftime("%Y-%m-%d %H:%M:%S") if event.created_at else "—" }}
+                  </td>
+                  <td class="user-agent">
+                    {{ event.user_agent or "Not available" }}
+                  </td>
+                  <td>{{ event.location or "Unavailable" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="card">
+          <h3>No sign-in events recorded yet</h3>
+          <p>
+            Events will appear here after login-event recording is enabled
+            in your authentication code.
+          </p>
+        </div>
+      {% endif %}
+    </section>
+
+    <p style="margin-top:24px">
+      <a href="{{ url_for('dashboard') }}">← Back to dashboard</a>
+    </p>
+  </main>
+
+  <footer>SecureDeps Cloud · Keep your account secure.</footer>
+</body>
+</html>

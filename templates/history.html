@@ -1,0 +1,67 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scan history | SecureDeps Cloud</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <header>
+    <a class="brand" href="{{ url_for('dashboard') }}">
+      <span class="brand-mark">S</span>
+      <span>SecureDeps <span class="gradient-text">Cloud</span></span>
+    </a>
+    <nav>
+      <a href="{{ url_for('dashboard') }}">Dashboard</a>
+      <a href="{{ url_for('history') }}">Scan history</a>
+      <form method="post" action="{{ url_for('auth.logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">Log out ↗</button>
+      </form>
+    </nav>
+  </header>
+
+  <main>
+    <p class="eyebrow">YOUR REPORT ARCHIVE</p>
+    <h1>Scan history</h1>
+    <p>Review previous project analyses saved to your account.</p>
+
+    {% if scans %}
+      <section class="card table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Project</th>
+              <th>Findings</th>
+              <th>Status</th>
+              <th>Created (UTC)</th>
+              <th>Report</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for scan in scans %}
+              <tr>
+                <td>{{ scan.filename }}</td>
+                <td>{{ scan.findings_count }}</td>
+                <td>{{ scan.analysis_status }}</td>
+                <td>{{ scan.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+                <td><a href="{{ url_for('scan_report', scan_id=scan.id) }}">Open report →</a></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    {% else %}
+      <section class="card">
+        <h2>Your archive is empty</h2>
+        <p>Run your first scan to start building your report history.</p>
+        <a class="button" href="{{ url_for('dashboard') }}">Start a scan →</a>
+      </section>
+    {% endif %}
+  </main>
+
+  <footer>SecureDeps Cloud · Your security history</footer>
+</body>
+</html>
