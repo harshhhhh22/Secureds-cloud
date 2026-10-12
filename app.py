@@ -1,7 +1,6 @@
 
 import json
 import os
-from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -23,6 +22,8 @@ from archive_handler import ArchiveValidationError, validate_zip_bytes
 from analyzers.structure import analyze_structure
 from analyzers.code_security import analyze_code_security
 from analyzers.dependencies import analyze_dependencies
+from analyzers.cicd import analyze_cicd
+
 from auth import auth
 from extensions import csrf, db, login_manager
 from models import LoginEvent, Scan, User
@@ -32,29 +33,14 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env", override=False)
 
 
-def utc_today():
-    return datetime.now(timezone.utc).date()
-
-
 def get_severity_counts(scans):
-    """Count findings by severity from the user's saved reports."""
-    counts = Counter({
-        "Critical": 0,
-        "High": 0,
-        "Medium": 0,
-        "Low": 0,
-        "Info": 0,
-        "Unknown": 0,
-    })
-
-    severity_map = {
-        "critical": "Critical",
-        "high": "High",
-        "medium": "Medium",
-        "moderate": "Medium",
-        "low": "Low",
-        "info": "Info",
-        "informational": "Info",
+    """Count findings by severity across saved scan reports."""
+    counts = {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "other": 0,
     }
 
     for scan in scans:
@@ -64,6 +50,7 @@ def get_severity_counts(scans):
             continue
 
         results = report.get("results", {})
+
         if not isinstance(results, dict):
             continue
 
@@ -72,6 +59,7 @@ def get_severity_counts(scans):
                 continue
 
             findings = analyzer_result.get("findings", [])
+
             if not isinstance(findings, list):
                 continue
 
@@ -79,22 +67,28 @@ def get_severity_counts(scans):
                 if not isinstance(finding, dict):
                     continue
 
-                raw_severity = str(
-                    finding.get("severity")
-                    or finding.get("severity_level")
-                    or finding.get("risk_level")
-                    or "Unknown"
-                ).strip().lower()
+                severity = str(
+                    finding.get("severity", "other")
+                ).lower()
 
-                counts[severity_map.get(raw_severity, "Unknown")] += 1
+                if severity in counts:
+                    counts[severity] += 1
+                else:
+                    counts["other"] += 1
 
-    return dict(counts)
+    return counts
 
 
 def create_app(test_config=None):
-    app = Flask(__name__, instance_relative_config=True)
+    app = Flask(
+        __name__,
+        instance_relative_config=True,
+    )
 
-    Path(app.instance_path).mkdir(parents=True, exist_ok=True)
+    Path(app.instance_path).mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     app.config.from_mapping(
         SECRET_KEY=os.environ.get("SECRET_KEY"),
@@ -103,16 +97,22 @@ def create_app(test_config=None):
             "sqlite:///securedeps.db",
         ),
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
+
+        # Upload and session security.
         MAX_CONTENT_LENGTH=200 * 1024 * 1024,
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=(
-            os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+            os.environ.get("COOKIE_SECURE", "false").lower()
+            == "true"
         ),
         REMEMBER_COOKIE_HTTPONLY=True,
         REMEMBER_COOKIE_SECURE=(
-            os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+            os.environ.get("COOKIE_SECURE", "false").lower()
+            == "true"
         ),
+
+        # CSRF and rate limiting.
         WTF_CSRF_TIME_LIMIT=3600,
         RATELIMIT_STORAGE_URI=os.environ.get(
             "RATELIMIT_STORAGE_URI",
@@ -137,7 +137,10 @@ def create_app(test_config=None):
 
     limiter = Limiter(
         key_func=get_remote_address,
-        default_limits=["200 per day", "50 per hour"],
+        default_limits=[
+            "200 per day",
+            "50 per hour",
+        ],
         storage_uri=app.config["RATELIMIT_STORAGE_URI"],
     )
     limiter.init_app(app)
@@ -156,18 +159,27 @@ def create_app(test_config=None):
     @login_manager.unauthorized_handler
     def unauthorized():
         if request.path.startswith("/api/"):
-            return jsonify({"error": "Authentication required."}), 401
+            return jsonify({
+                "error": "Authentication required."
+            }), 401
+
         return redirect(url_for("auth.login"))
 
     app.register_blueprint(auth)
 
-    limiter.limit("5 per hour")(app.view_functions["auth.signup"])
-    limiter.limit("5 per minute")(app.view_functions["auth.login"])
+    # Authentication rate limits.
+    limiter.limit("5 per hour")(
+        app.view_functions["auth.signup"]
+    )
+    limiter.limit("5 per minute")(
+        app.view_functions["auth.login"]
+    )
 
     @app.get("/")
     def home():
         if current_user.is_authenticated:
             return redirect(url_for("dashboard"))
+
         return redirect(url_for("auth.login"))
 
     @app.get("/api/health")
@@ -181,79 +193,80 @@ def create_app(test_config=None):
     @app.get("/dashboard")
     @login_required
     def dashboard():
-        all_scans = (
-            Scan.query.filter_by(user_id=current_user.id)
+        scans = (
+            Scan.query
+            .filter_by(user_id=current_user.id)
             .order_by(Scan.created_at.desc())
             .all()
         )
 
-        recent_scans = all_scans[:5]
-        severity_counts = get_severity_counts(all_scans)
+        recent_scans = scans[:5]
+        severity_counts = get_severity_counts(scans)
 
-        # Last seven UTC calendar days, oldest to newest.
-        today = utc_today()
-        activity_dates = [
-            today - timedelta(days=offset)
-            for offset in range(6, -1, -1)
-        ]
+        # Build the last seven calendar days, including today.
+        today = datetime.now(timezone.utc).date()
+        start_date = today - timedelta(days=6)
 
-        activity_counts = {day: 0 for day in activity_dates}
+        daily_counts = {
+            (start_date + timedelta(days=i)): 0
+            for i in range(7)
+        }
 
-        for scan in all_scans:
-            if scan.created_at is None:
-                continue
-
+        for scan in scans:
             created_at = scan.created_at
 
-            # SQLite may return naive datetimes even when timezone=True.
-            scan_day = created_at.date()
-            if scan_day in activity_counts:
-                activity_counts[scan_day] += 1
+            if created_at is None:
+                continue
 
-        activity_labels = [
-            day.strftime("%a") for day in activity_dates
+            # SQLite may return a naive datetime. Treat stored
+            # timestamps as UTC when timezone information is absent.
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(
+                    tzinfo=timezone.utc
+                )
+
+            scan_date = created_at.astimezone(
+                timezone.utc
+            ).date()
+
+            if scan_date in daily_counts:
+                daily_counts[scan_date] += 1
+
+        scan_labels = [
+            day.strftime("%b %d")
+            for day in daily_counts
         ]
-        activity_values = [
-            activity_counts[day] for day in activity_dates
-        ]
+        scan_values = list(daily_counts.values())
 
         return render_template(
             "dashboard.html",
             scans=recent_scans,
-            total_scans=len(all_scans),
+            recent_scans=recent_scans,
+            total_scans=len(scans),
             severity_counts=severity_counts,
-            activity_labels=activity_labels,
-            activity_values=activity_values,
-        )
-
-    @app.get("/security-activity")
-    @login_required
-    def security_activity():
-        events = (
-            LoginEvent.query.filter_by(user_id=current_user.id)
-            .order_by(LoginEvent.created_at.desc())
-            .limit(100)
-            .all()
-        )
-
-        return render_template(
-            "security_activity.html",
-            events=events,
+            scan_labels=scan_labels,
+            scan_values=scan_values,
         )
 
     @app.get("/history")
     @login_required
     def history():
         scans = (
-            Scan.query.filter_by(user_id=current_user.id)
+            Scan.query
+            .filter_by(user_id=current_user.id)
             .order_by(Scan.created_at.desc())
             .all()
         )
-        return render_template("history.html", scans=scans)
+
+        return render_template(
+            "history.html",
+            scans=scans,
+        )
 
     @app.get("/history/<int:scan_id>")
     @login_required
     def scan_report(scan_id):
+        # Users can only access their own reports.
         scan = Scan.query.filter_by(
             id=scan_id,
             user_id=current_user.id,
@@ -270,6 +283,22 @@ def create_app(test_config=None):
             report=report,
         )
 
+    @app.get("/security-activity")
+    @login_required
+    def security_activity():
+        events = (
+            LoginEvent.query
+            .filter_by(user_id=current_user.id)
+            .order_by(LoginEvent.created_at.desc())
+            .limit(100)
+            .all()
+        )
+
+        return render_template(
+            "security_activity.html",
+            events=events,
+        )
+
     @app.post("/api/scan")
     @login_required
     def scan_project():
@@ -278,14 +307,17 @@ def create_app(test_config=None):
         if uploaded_file is None:
             return jsonify({
                 "error": (
-                    "No file uploaded. Use the form field named 'file'."
+                    "No file uploaded. "
+                    "Use the form field named 'file'."
                 )
             }), 400
 
         filename = (uploaded_file.filename or "").strip()
 
         if not filename:
-            return jsonify({"error": "Please select a ZIP file."}), 400
+            return jsonify({
+                "error": "Please select a ZIP file."
+            }), 400
 
         if not filename.lower().endswith(".zip"):
             return jsonify({
@@ -299,52 +331,75 @@ def create_app(test_config=None):
             archive = validate_zip_bytes(zip_data)
 
             try:
+                # Run all four analyzers against the validated ZIP.
                 structure_result = analyze_structure(archive)
                 code_result = analyze_code_security(archive)
                 dependency_result = analyze_dependencies(archive)
+                cicd_result = analyze_cicd(archive)
+
             finally:
                 archive.close()
                 archive = None
 
+            # Combine findings from every implemented analyzer.
             findings = (
                 structure_result["findings"]
                 + code_result["findings"]
                 + dependency_result["findings"]
+                + cicd_result["findings"]
             )
 
             report = {
                 "message": "Project analysis completed.",
                 "analysis_status": "partial",
+
                 "analyzers_completed": [
                     "structure",
                     "code_security",
                     "dependencies",
+                    "cicd",
                 ],
+
                 "summary": {
                     "files_inspected": (
-                        structure_result["files_inspected"]
-                        + code_result["files_inspected"]
+                        structure_result.get("files_inspected", 0)
+                        + code_result.get("files_inspected", 0)
+                        + cicd_result.get("files_inspected", 0)
                     ),
                     "requirements_files_found": len(
-                        dependency_result["requirements_files_found"]
+                        dependency_result.get(
+                            "requirements_files_found", []
+                        )
                     ),
-                    "pinned_dependencies_checked": dependency_result[
-                        "pinned_dependencies_checked"
-                    ],
+                    "pinned_dependencies_checked": (
+                        dependency_result.get(
+                            "pinned_dependencies_checked", 0
+                        )
+                    ),
+                    "cicd_files_inspected": (
+                        cicd_result.get("files_inspected", 0)
+                    ),
                     "total_findings": len(findings),
                 },
+
                 "results": {
                     "structure": structure_result,
                     "code_security": code_result,
                     "dependencies": dependency_result,
+                    "cicd": cicd_result,
                 },
+
                 "note": (
-                    "Documentation and CI/CD checks are not implemented yet. "
-                    "Dependency checks currently cover supported requirements "
-                    "files and exactly pinned package versions."
+                    "CI/CD checks inspect supported GitHub Actions, "
+                    "GitLab CI, Jenkins, and Dockerfile patterns. "
+                    "Documentation checks are not implemented yet. "
+                    "Dependency checks cover supported requirements "
+                    "files and exactly pinned package versions. "
+                    "Pattern-based findings require manual review."
                 ),
             }
 
+            # Save the report for the authenticated user.
             scan = Scan(
                 user_id=current_user.id,
                 filename=Path(filename).name[:255],
@@ -362,16 +417,21 @@ def create_app(test_config=None):
                 "scan_report",
                 scan_id=scan.id,
             )
+
             return jsonify(response), 200
 
         except ArchiveValidationError as exc:
-            return jsonify({"error": str(exc)}), 400
+            return jsonify({
+                "error": str(exc)
+            }), 400
 
         except Exception:
             db.session.rollback()
+
             app.logger.exception(
                 "Unexpected error while analyzing an upload."
             )
+
             return jsonify({
                 "error": (
                     "An unexpected error occurred during analysis. "
@@ -386,7 +446,10 @@ def create_app(test_config=None):
     @app.errorhandler(413)
     def request_too_large(_error):
         return jsonify({
-            "error": "The upload is too large. The maximum size is 200 MB."
+            "error": (
+                "The upload is too large. "
+                "The maximum size is 200 MB."
+            )
         }), 413
 
     with app.app_context():
